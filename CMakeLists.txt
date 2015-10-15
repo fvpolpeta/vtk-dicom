@@ -19,36 +19,93 @@ set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/CMake" ${CMAKE_MODULE_PATH})
 # Use ctest for dashboard submissions
 include(CTest)
 
-# Look for a VTK build directory
-if (Module_vtkDICOM)
+# Project version
+set(DICOM_MAJOR_VERSION 0)
+set(DICOM_MINOR_VERSION 6)
+set(DICOM_BUILD_VERSION 7)
+set(DICOM_SHORT_VERSION "${DICOM_MAJOR_VERSION}.${DICOM_MINOR_VERSION}")
+set(DICOM_VERSION "${DICOM_SHORT_VERSION}.${DICOM_BUILD_VERSION}")
+
+if(Module_vtkDICOM)
+  # We are being built as a VTK remote module
   message(STATUS "vtkDICOM: Building vtkDICOM as a Remote VTK Module")
   set(EXECUTABLE_OUTPUT_PATH ${VTK_BINARY_DIR})
   set(vtkDICOM_BINARY_DIR ${EXECUTABLE_OUTPUT_PATH})
   find_package(VTK PATHS ${VTK_BINARY_DIR})
   include(${VTK_USE_FILE})
   vtk_module_impl()
+
+  set(ZLIB_LIBS vtkzlib)
+  set(BUILD_PYTHON_WRAPPERS ${VTK_WRAP_PYTHON})
+  set(BUILD_JAVA_WRAPPERS ${VTK_WRAP_JAVA})
+
+  if (NOT DEFINED VTK_PYTHON_EXE)
+    set(VTK_PYTHON_EXE "\$<TARGET_FILE:vtkpython>")
+  endif()
+
+  option(BUILD_DICOM_PROGRAMS "Build the vtkDICOM tools" ON)
+  set(BUILD_PROGRAMS ${BUILD_DICOM_PROGRAMS})
+
 else()
+  # We are being built as a stand-alone package
+  option(BUILD_SHARED_LIBS "Build shared libraries." OFF)
+
+  # Which parts of the package to build
+  option(BUILD_TESTING "Build the tests" ON)
+  option(BUILD_PROGRAMS "Build some useful DICOM tools" ON)
+  option(BUILD_EXAMPLES "Build the examples" ON)
+
   find_package(VTK REQUIRED)
   message(STATUS "vtkDICOM: Building vtkDICOM stand-alone")
-endif()
-if(VTK_FOUND)
   include(${VTK_USE_FILE})
   if("${VTK_MAJOR_VERSION}.${VTK_MINOR_VERSION}" VERSION_LESS 5.8)
     message(FATAL_ERROR "VTK 5.8 or later is required.")
   endif()
-  # Check if VTK set VTK_ZLIB_LIBRARIES
-  if(NOT VTK_ZLIB_LIBRARIES)
-    # VTK 6 doesn't set it, so search for vtkzlib directly
-    list(FIND VTK_LIBRARIES vtkzlib TMP_INDEX)
-    if(TMP_INDEX GREATER -1)
-      set(VTK_ZLIB_LIBRARIES vtkzlib)
+
+  # Wrap Python option
+  if(VTK_WRAP_PYTHON)
+    option(BUILD_PYTHON_WRAPPERS "Build python wrappers" ON)
+  else()
+    unset(BUILD_PYTHON_WRAPPERS CACHE)
+  endif()
+
+  # Wrap Java option
+  if(VTK_WRAP_JAVA)
+    option(BUILD_JAVA_WRAPPERS "Build java wrappers" OFF)
+  else()
+    unset(BUILD_JAVA_WRAPPERS CACHE)
+  endif()
+
+  # Set up our directory structure for output libraries and binaries
+  # (Note: these are the build locations, not the install locations)
+  if(NOT CMAKE_RUNTIME_OUTPUT_DIRECTORY)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${DICOM_BINARY_DIR}/bin")
+  endif()
+  if(NOT CMAKE_LIBRARY_OUTPUT_DIRECTORY)
+    if(UNIX)
+      set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${DICOM_BINARY_DIR}/lib")
+    else()
+      set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${DICOM_BINARY_DIR}/bin")
     endif()
   endif()
-  set(DICOM_USE_VTKZLIB OFF)
-  if(VTK_ZLIB_LIBRARIES)
-    set(DICOM_USE_VTKZLIB ON)
-    set(ZLIB_LIBS ${VTK_ZLIB_LIBRARIES})
+  if(NOT CMAKE_ARCHIVE_OUTPUT_DIRECTORY)
+    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${DICOM_BINARY_DIR}/lib")
   endif()
+
+endif()
+
+# Check if VTK set VTK_ZLIB_LIBRARIES
+if(NOT VTK_ZLIB_LIBRARIES)
+  # VTK 6 doesn't set it, so search for vtkzlib directly
+  list(FIND VTK_LIBRARIES vtkzlib TMP_INDEX)
+  if(TMP_INDEX GREATER -1)
+    set(VTK_ZLIB_LIBRARIES vtkzlib)
+  endif()
+endif()
+set(DICOM_USE_VTKZLIB OFF)
+if(VTK_ZLIB_LIBRARIES)
+  set(DICOM_USE_VTKZLIB ON)
+  set(ZLIB_LIBS ${VTK_ZLIB_LIBRARIES})
 endif()
 
 # Look for zlib
@@ -94,33 +151,6 @@ if(USE_DCMTK)
   include_directories(${DCMTK_INCLUDE_DIRS})
 endif()
 
-# Project version
-set(DICOM_MAJOR_VERSION 0)
-set(DICOM_MINOR_VERSION 6)
-set(DICOM_BUILD_VERSION 7)
-set(DICOM_SHORT_VERSION "${DICOM_MAJOR_VERSION}.${DICOM_MINOR_VERSION}")
-set(DICOM_VERSION "${DICOM_SHORT_VERSION}.${DICOM_BUILD_VERSION}")
-
-# Choose static or shared libraries.
-option(BUILD_SHARED_LIBS "Build shared libraries." OFF)
-
-# Which parts of the package to build
-option(BUILD_PROGRAMS "Build some useful DICOM tools" ON)
-option(BUILD_TESTING "Build the tests" ON)
-option(BUILD_EXAMPLES "Build the examples" ON)
-
-if(VTK_WRAP_PYTHON)
-  option(BUILD_PYTHON_WRAPPERS "Build python wrappers" ON)
-else()
-  unset(BUILD_PYTHON_WRAPPERS CACHE)
-endif()
-
-if(VTK_WRAP_JAVA)
-  option(BUILD_JAVA_WRAPPERS "Build java wrappers" OFF)
-else()
-  unset(BUILD_JAVA_WRAPPERS CACHE)
-endif()
-
 # Store the git hash of the current head
 if(EXISTS "${DICOM_SOURCE_DIR}/.git/HEAD")
   file(READ "${DICOM_SOURCE_DIR}/.git/HEAD" DICOM_SOURCE_VERSION)
@@ -152,22 +182,6 @@ else()
     DICOM_BUILD_DATE "${DATE_TIME}")
   string(REGEX REPLACE "[^/]*/([0-9:]*).*" "\\1"
     DICOM_BUILD_TIME "${DATE_TIME}")
-endif()
-
-# Set up our directory structure for output libraries and binaries
-# (Note: these are the build locations, not the install locations)
-if(NOT CMAKE_RUNTIME_OUTPUT_DIRECTORY)
-  set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${DICOM_BINARY_DIR}/bin")
-endif()
-if(NOT CMAKE_LIBRARY_OUTPUT_DIRECTORY)
-  if(UNIX)
-    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${DICOM_BINARY_DIR}/lib")
-  else()
-    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${DICOM_BINARY_DIR}/bin")
-  endif()
-endif()
-if(NOT CMAKE_ARCHIVE_OUTPUT_DIRECTORY)
-  set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${DICOM_BINARY_DIR}/lib")
 endif()
 
 # Set up our target directory structure for "make install"
@@ -225,7 +239,6 @@ if(BUILD_PYTHON_WRAPPERS)
   set(DICOM_PYTHON_LIBRARIES vtkDICOMPythonD)
 endif()
 
-
 # For the java wrappers
 if(BUILD_JAVA_WRAPPERS)
   find_package(Java REQUIRED)
@@ -281,53 +294,53 @@ endif()
 install(FILES Copyright.txt
   DESTINATION ${DICOM_DATA_INSTALL_DEST})
 
-if (NOT Module_vtkDICOM)
-#---------------------------------------------------
-# Export information for other projects
+if(NOT Module_vtkDICOM)
+  #---------------------------------------------------
+  # Export information for other projects
 
-# Add all targets to the build-tree export set
-export(TARGETS ${DICOM_LIBRARIES}
-  ${DICOM_PYTHON_LIBRARIES} ${DICOM_JAVA_LIBRARIES}
-  FILE "${DICOM_BINARY_DIR}/DICOMTargets.cmake")
+  # Add all targets to the build-tree export set
+  export(TARGETS ${DICOM_LIBRARIES}
+    ${DICOM_PYTHON_LIBRARIES} ${DICOM_JAVA_LIBRARIES}
+    FILE "${DICOM_BINARY_DIR}/DICOMTargets.cmake")
 
-# Export the package for use from the build-tree
-# (this registers the build-tree with a global CMake-registry)
-export(PACKAGE DICOM)
+  # Export the package for use from the build-tree
+  # (this registers the build-tree with a global CMake-registry)
+  export(PACKAGE DICOM)
 
-# Create the DICOMConfig.cmake and DICOMConfigVersion.cmake files
-# ... for the build tree
-set(INCLUDE_DIRS_CONFIG ${DICOM_INCLUDE_DIRS})
-set(LIBRARY_DIRS_CONFIG "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}")
-configure_file(CMake/DICOMConfig.cmake.in
-  "${DICOM_BINARY_DIR}/DICOMConfig.cmake" @ONLY)
-# ... for the install tree
-file(RELATIVE_PATH REL_INCLUDE_DIR "${DICOM_CMAKE_INSTALL_DEST}"
-  "${DICOM_INCLUDE_INSTALL_DEST}")
-set(INCLUDE_DIRS_CONFIG "\${DICOM_CMAKE_DIR}/${REL_INCLUDE_DIR}")
-file(RELATIVE_PATH REL_LIBRARY_DIR "${DICOM_CMAKE_INSTALL_DEST}"
-  "${DICOM_LIBRARY_INSTALL_DEST}")
-set(LIBRARY_DIRS_CONFIG "\${DICOM_CMAKE_DIR}/${REL_LIBRARY_DIR}")
-configure_file(CMake/DICOMConfig.cmake.in
-  "${DICOM_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/DICOMConfig.cmake" @ONLY)
+  # Create the DICOMConfig.cmake and DICOMConfigVersion.cmake files
+  # ... for the build tree
+  set(INCLUDE_DIRS_CONFIG ${DICOM_INCLUDE_DIRS})
+  set(LIBRARY_DIRS_CONFIG "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}")
+  configure_file(CMake/DICOMConfig.cmake.in
+    "${DICOM_BINARY_DIR}/DICOMConfig.cmake" @ONLY)
+  # ... for the install tree
+  file(RELATIVE_PATH REL_INCLUDE_DIR "${DICOM_CMAKE_INSTALL_DEST}"
+    "${DICOM_INCLUDE_INSTALL_DEST}")
+  set(INCLUDE_DIRS_CONFIG "\${DICOM_CMAKE_DIR}/${REL_INCLUDE_DIR}")
+  file(RELATIVE_PATH REL_LIBRARY_DIR "${DICOM_CMAKE_INSTALL_DEST}"
+    "${DICOM_LIBRARY_INSTALL_DEST}")
+  set(LIBRARY_DIRS_CONFIG "\${DICOM_CMAKE_DIR}/${REL_LIBRARY_DIR}")
+  configure_file(CMake/DICOMConfig.cmake.in
+    "${DICOM_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/DICOMConfig.cmake" @ONLY)
 
-# ... for both
-configure_file(CMake/DICOMConfigVersion.cmake.in
-  "${DICOM_BINARY_DIR}/DICOMConfigVersion.cmake" @ONLY)
+  # ... for both
+  configure_file(CMake/DICOMConfigVersion.cmake.in
+    "${DICOM_BINARY_DIR}/DICOMConfigVersion.cmake" @ONLY)
 
-# Install the DICOMConfig.cmake and DICOMConfigVersion.cmake
-install(FILES
-  "${DICOM_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/DICOMConfig.cmake"
-  "${DICOM_BINARY_DIR}/DICOMConfigVersion.cmake"
-  DESTINATION "${DICOM_CMAKE_INSTALL_DEST}" COMPONENT Development)
+  # Install the DICOMConfig.cmake and DICOMConfigVersion.cmake
+  install(FILES
+    "${DICOM_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/DICOMConfig.cmake"
+    "${DICOM_BINARY_DIR}/DICOMConfigVersion.cmake"
+    DESTINATION "${DICOM_CMAKE_INSTALL_DEST}" COMPONENT Development)
 
-# Install the Use file in the build and install directories
-configure_file(${DICOM_SOURCE_DIR}/CMake/UseDICOM.cmake.in
-  ${DICOM_BINARY_DIR}/UseDICOM.cmake COPYONLY IMMEDIATE)
-install(FILES
-  "${DICOM_BINARY_DIR}/UseDICOM.cmake"
-  DESTINATION "${DICOM_CMAKE_INSTALL_DEST}" COMPONENT Development)
+  # Install the Use file in the build and install directories
+  configure_file(${DICOM_SOURCE_DIR}/CMake/UseDICOM.cmake.in
+    ${DICOM_BINARY_DIR}/UseDICOM.cmake COPYONLY IMMEDIATE)
+  install(FILES
+    "${DICOM_BINARY_DIR}/UseDICOM.cmake"
+    DESTINATION "${DICOM_CMAKE_INSTALL_DEST}" COMPONENT Development)
 
-# Install the export set for use with the install-tree
-install(EXPORT DICOMTargets
-  DESTINATION "${DICOM_CMAKE_INSTALL_DEST}" COMPONENT Development)
+  # Install the export set for use with the install-tree
+  install(EXPORT DICOMTargets
+    DESTINATION "${DICOM_CMAKE_INSTALL_DEST}" COMPONENT Development)
 endif()
